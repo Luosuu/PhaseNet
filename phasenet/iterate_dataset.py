@@ -28,6 +28,7 @@ from accelerate import Accelerator
 from huggingface_hub import login
 from torch_vqvae import SimpleVQAutoEncoder, train
 from postprocess import extract_picks
+from detect_peaks import detect_peaks
 
 if __name__ == '__main__':
 
@@ -65,11 +66,45 @@ if __name__ == '__main__':
     for _ in (pbar := trange(train_iter)):
         x, y = next(iterate_dataset(train_loader))
         x = x.permute(0, 3, 1, 2)
-        y = y.permute(0, 3, 1, 2)
 
-        y = y.squeeze()
-        print(y)
-        print(y.shape)
+        # y = y.permute(0, 3, 1, 2)
+
+        # y = y.squeeze()
+        # print(y)
+        # print(y.shape)
+
+        dimension_list = list(y.size())
+        Nb = dimension_list[0]
+        Nt = dimension_list[1]
+        Ns = dimension_list[2]
+        Nc = dimension_list[3]
+        
+        y = y.numpy(force=True)
+
+        
+        print(f"Nb: {Nb}, Nt: {Nt}, Ns: {Ns}, Nc: {Nc}")
+        phases = ["P", "S"]
+        mph={"P": 0.3, "S":0.3}
+        mpd = 50
+        dt = 0.01
+        pre_idx = int(1 / dt)
+        post_idx = int(4 / dt)
+
+
+        picks = []
+        for i in range(Nb):
+            idxs, probs = detect_peaks(y[i, :, 0, 2], mph=mph["S"], mpd=mpd, show=False) # only S is needed.
+            # print(f"idxs: {idxs}, probs : {probs}")
+            for l, (phase_index, phase_prob) in enumerate(zip(idxs, probs)):
+                phase_index = int(phase_index)
+                picks.append(phase_index-3000)
+        
+        label = torch.tensor(picks).to(device)
+        print(label)
+
+
+        
+        
         # all_ones = y.all(dim=1)
         # label = all_ones.squeeze(-1).to(torch.float32)
         # print(label)
