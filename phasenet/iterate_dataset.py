@@ -51,22 +51,6 @@ if __name__ == '__main__':
         shuffle=True,
     )
 
-    
-
-    print("training VQ-VAE")
-    torch.random.manual_seed(seed)
-    model = SimpleVQAutoEncoder(codebook_size=num_codes).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr)
-    train(model, train_loader, opt, device, train_iterations=train_iter)
-
-
-    print("Train a LSTM basline")
-
-    model_lm = torch.nn.LSTM(input_size = 2251, hidden_size=128, num_layers=2, batch_first=True)
-    
-    optimizer = torch.optim.AdamW(model_lm.parameters(), lr=lr)
-
-    model_lm = model_lm.to(device)
 
     def iterate_dataset(data_loader):
         data_iter = iter(data_loader)
@@ -79,10 +63,13 @@ if __name__ == '__main__':
             yield x.to(device), y.to(device)
 
     for _ in (pbar := trange(train_iter)):
-        optimizer.zero_grad()
         x, y = next(iterate_dataset(train_loader))
         x = x.permute(0, 3, 1, 2)
         y = y.permute(0, 3, 1, 2)
+
+        y = y.squeeze()
+        print(y)
+        print(y.shape)
         # all_ones = y.all(dim=1)
         # label = all_ones.squeeze(-1).to(torch.float32)
         # print(label)
@@ -93,14 +80,3 @@ if __name__ == '__main__':
             
         #     # Print the indices for the ith row
         #     print(f"Row {i}: Indices with value 1: {indices.tolist()}") # empty now??
-
-        out, indices, cmt_loss = model.encode(x)
-        print(out.shape)
-        out = out.squeeze()
-        outputs = model_lm(out)
-        loss = outputs.loss
-        accelerator.backward(loss)
-        optimizer.step()
-        pbar.set_description(
-            f"loss: {loss.item():.3f} | "
-        )

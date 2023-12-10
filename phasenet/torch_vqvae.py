@@ -75,7 +75,7 @@ class SimpleVQAutoEncoder(nn.Module):
         return x.clamp(-1, 1)
 
 
-def train(model, train_loader, train_iterations=1000, alpha=10):
+def train(model, train_loader, opt, device, train_iterations=1000, alpha=10):
     def iterate_dataset(data_loader):
         data_iter = iter(data_loader)
         while True:
@@ -104,7 +104,7 @@ def train(model, train_loader, train_iterations=1000, alpha=10):
         pbar.set_description(
             f"rec loss: {rec_loss.item():.3f} | "
             + f"cmt loss: {cmt_loss.item():.3f} | "
-            + f"active %: {indices.unique().numel() / num_codes * 100:.3f}"
+           # + f"active %: {indices.unique().numel() / num_codes * 100:.3f}"
         )
     return
 
@@ -136,4 +136,4 @@ if __name__ == '__main__':
     torch.random.manual_seed(seed)
     model = SimpleVQAutoEncoder(codebook_size=num_codes).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
-    train(model, train_loader, train_iterations=train_iter)
+    train(model, train_loader, opt, device, train_iterations=train_iter)
