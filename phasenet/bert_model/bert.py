@@ -1,7 +1,7 @@
 import torch.nn as nn
 
-from transformer import TransformerBlock
-from embedding import BERTEmbedding
+from .transformer import TransformerBlock
+from .embedding import BERTEmbedding
 import torch
 
 class BERT(nn.Module):
@@ -48,6 +48,6 @@ class BERT(nn.Module):
         
         x = torch.mean(x, dim = 1)
         x = self.linear_mapping(x)
-        print(x.shape)
+        # print(x.shape)
         x = self.relu(x)
         return x

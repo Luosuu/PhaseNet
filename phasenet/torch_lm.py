@@ -26,6 +26,39 @@ from seismic_dataset import SeismicDataset
 from rinas.hf.mlm_modules import *
 from accelerate import Accelerator
 from huggingface_hub import login
+import bert_model
+from bert_model import BERT
+from postprocess import extract_picks
+from detect_peaks import detect_peaks
+
+def get_label_tensor(ori_label):
+    # get label tensor
+    dimension_list = list(ori_label.size())
+    Nb = dimension_list[0]
+    Nt = dimension_list[1]
+    Ns = dimension_list[2]
+    Nc = dimension_list[3]
+    
+    ori_label = ori_label.numpy(force=True)
+
+    phases = ["P", "S"]
+    mph={"P": 0.3, "S":0.3}
+    mpd = 50
+    dt = 0.01
+    pre_idx = int(1 / dt)
+    post_idx = int(4 / dt)
+
+
+    picks = []
+    for i in range(Nb):
+        idxs, probs = detect_peaks(ori_label[i, :, 0, 2], mph=mph["S"], mpd=mpd, show=False) # only S is needed.
+        # print(f"idxs: {idxs}, probs : {probs}")
+        for l, (phase_index, phase_prob) in enumerate(zip(idxs, probs)):
+            phase_index = int(phase_index)
+            picks.append(phase_index-3000)
+    
+    label = torch.tensor(picks).to(device)
+    return label
 
 class SimpleVQAutoEncoder(nn.Module):
     def __init__(self, **vq_kwargs):
@@ -134,50 +167,16 @@ if __name__ == '__main__':
 
     print("training VQ-VAE")
     torch.random.manual_seed(seed)
-    model = SimpleVQAutoEncoder(codebook_size=num_codes).to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=lr)
-    train(model, train_loader, train_iterations=train_iter)
+    model = torch.load("./model/torch_vqvae.pt")
 
+    print("Train a MLP basline")
 
-    print("Fine-tuning Language Model")
-
-    # model_args = ModelArguments(
-    #     "roberta-base", 
-    #     cache_dir="/scratch/fad3ew/huggingface_cache/datasets/"
-    # )
-
-    login(token='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')
-
-    os.environ['HF_DATASETS_CACHE'] = "/scratch/fad3ew/huggingface_cache/datasets/"
-    os.environ['TRANSFORMERS_CACHE'] = "/scratch/fad3ew/huggingface_cache/datasets/"
-
-    training_args = TrainingArguments(
-        output_dir="/scratch/fad3ew/huggingface_cache/test-mlm", 
-        do_train=True, 
-        per_device_train_batch_size=batch_size,
-        max_steps=1000
-    )
-
-    config = AutoConfig.from_pretrained("meta-llama/Llama-2-7b-hf", cache_dir="/scratch/fad3ew/huggingface_cache/datasets/")
-
-    model_lm = AutoModelForCausalLM.from_config(config)
+    model_pred = BERT(hidden = 2256)
     
-    # Optimizer
-    # Split weights in two groups, one with weight decay and the other not.
-    no_decay = ["bias", "LayerNorm.weight"]
-    optimizer_grouped_parameters = [
-        {
-            "params": [p for n, p in model_lm.named_parameters() if not any(nd in n for nd in no_decay)],
-            "weight_decay": training_args.weight_decay,
-        },
-        {
-            "params": [p for n, p in model_lm.named_parameters() if any(nd in n for nd in no_decay)],
-            "weight_decay": 0.0,
-        },
-    ]
-    optimizer = torch.optim.AdamW(optimizer_grouped_parameters, lr=training_args.learning_rate)
+    
+    optimizer = torch.optim.AdamW(model_pred.parameters(), lr=lr)
 
-    model_lm = model_lm.to(device)
+    model_pred = model_pred.to(device)
 
     def iterate_dataset(data_loader):
         data_iter = iter(data_loader)
@@ -193,14 +192,18 @@ if __name__ == '__main__':
         optimizer.zero_grad()
         x, y = next(iterate_dataset(train_loader))
         x = x.permute(0, 3, 1, 2)
-        y = y.permute(0, 3, 1, 2)
+
         out, indices, cmt_loss = model.encode(x)
-        print(out.shape)
         out = out.squeeze()
-        outputs = model_lm(out)
-        loss = outputs.loss
-        accelerator.backward(loss)
+        out = torch.nn.functional.pad(out, pad=(0,5), mode="constant", value=0)
+        outputs = model_pred(out)
+
+        labels = get_label_tensor(y)
+        # outputs = torch.randint(low=0, high=1285, size=(20,)).to(device).to(float) # random guess, loss ~ 500
+        loss = (outputs - labels).abs().mean()
+        loss.backward()
         optimizer.step()
+        
         pbar.set_description(
             f"loss: {loss.item():.3f} | "
         )

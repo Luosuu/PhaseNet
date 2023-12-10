@@ -138,10 +138,10 @@ if __name__ == '__main__':
             outputs = model_pred(out)
 
             labels = get_label_tensor(y)
-            # outputs = torch.randint(low=0, high=500, size=(20,)).to(device).to(float) # random guess
+            outputs = torch.randint(low=0, high=1285, size=(20,)).to(device).to(float) # random guess, loss ~ 500
             loss = (outputs - labels).abs().mean()
-            loss.backward()
-            optimizer.step()
+            # loss.backward()
+            # optimizer.step()
             accum+=loss.item()
 
         pbar.set_description(

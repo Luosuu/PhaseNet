@@ -52,6 +52,7 @@ if __name__ == '__main__':
         shuffle=True,
     )
 
+    y_max = 0
 
     def iterate_dataset(data_loader):
         data_iter = iter(data_loader)
@@ -82,7 +83,7 @@ if __name__ == '__main__':
         y = y.numpy(force=True)
 
         
-        print(f"Nb: {Nb}, Nt: {Nt}, Ns: {Ns}, Nc: {Nc}")
+        # print(f"Nb: {Nb}, Nt: {Nt}, Ns: {Ns}, Nc: {Nc}")
         phases = ["P", "S"]
         mph={"P": 0.3, "S":0.3}
         mpd = 50
@@ -96,11 +97,14 @@ if __name__ == '__main__':
             idxs, probs = detect_peaks(y[i, :, 0, 2], mph=mph["S"], mpd=mpd, show=False) # only S is needed.
             # print(f"idxs: {idxs}, probs : {probs}")
             for l, (phase_index, phase_prob) in enumerate(zip(idxs, probs)):
+                if phase_index > y_max:
+                    y_max = phase_index
                 phase_index = int(phase_index)
                 picks.append(phase_index-3000)
         
         label = torch.tensor(picks).to(device)
-        print(label)
+    
+    print(y_max)
 
 
         

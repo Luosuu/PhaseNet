@@ -1,4 +1,4 @@
-from bert import BERT
+from .bert import BERT
 import torch
 
 model = BERT(hidden = 2256)
