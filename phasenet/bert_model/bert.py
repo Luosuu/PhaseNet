@@ -32,8 +32,9 @@ class BERT(nn.Module):
         # multi-layers transformer blocks, deep network
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(hidden, attn_heads, hidden * 4, dropout) for _ in range(n_layers)])
-        self.linear_mapping = nn.Linear(2256, 1)
-        self.relu = nn.ReLU()
+        self.linear_mapping = nn.Linear(2256, 9001)
+        # self.relu = nn.ReLU()
+
     def forward(self, x):
         # attention masking for padded token
         # torch.ByteTensor([batch_size, 1, seq_len, seq_len)
@@ -49,5 +50,5 @@ class BERT(nn.Module):
         x = torch.mean(x, dim = 1)
         x = self.linear_mapping(x)
         # print(x.shape)
-        x = self.relu(x)
+        # x = self.relu(x)
         return x

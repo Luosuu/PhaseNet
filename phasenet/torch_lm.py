@@ -2,7 +2,7 @@
 # From https://github.com/minyoungg/vqtorch/blob/main/examples/autoencoder.py
 
 from tqdm.auto import trange
-
+# from typing import Variable
 import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
@@ -23,13 +23,11 @@ from transformers import (
 )
 from vector_quantize_pytorch import VectorQuantize
 from seismic_dataset import SeismicDataset
-from rinas.hf.mlm_modules import *
-from accelerate import Accelerator
-from huggingface_hub import login
 import bert_model
 from bert_model import BERT
 from postprocess import extract_picks
 from detect_peaks import detect_peaks
+import numpy
 
 def get_label_tensor(ori_label):
     # get label tensor
@@ -169,7 +167,7 @@ if __name__ == '__main__':
     torch.random.manual_seed(seed)
     model = torch.load("./model/torch_vqvae.pt")
 
-    print("Train a MLP basline")
+    print("Train a BERT")
 
     model_pred = BERT(hidden = 2256)
     
@@ -198,12 +196,43 @@ if __name__ == '__main__':
         out = torch.nn.functional.pad(out, pad=(0,5), mode="constant", value=0)
         outputs = model_pred(out)
 
-        labels = get_label_tensor(y)
+        # labels = get_label_tensor(y)
+        labels = y[:, :, 0, 2]
+        # print(labels.max(dim=1)[1])
+        # print(f"labels: {labels}")
         # outputs = torch.randint(low=0, high=1285, size=(20,)).to(device).to(float) # random guess, loss ~ 500
-        loss = (outputs - labels).abs().mean()
-        loss.backward()
+
+
+        # ground_truth = labels.max(dim=1)[1].to(float)
+        # preds = outputs.max(dim=1)[1].to(float)
+
+        ground_truth = torch.nn.functional.softmax(labels, dim=1)
+        outputs = torch.nn.functional.softmax(outputs, dim=1)
+        loss_output = (ground_truth - outputs).abs().mean()
+        # loss_output = loss(outputs, ground_truth)
+        loss_output.backward()
+
+        # loss = (outputs - labels).abs().mean()
+        # loss.backward()
+
         optimizer.step()
         
-        pbar.set_description(
-            f"loss: {loss.item():.3f} | "
+        ground_truth = labels.max(dim=1)[1].numpy(force=True)
+        preds = outputs.max(dim=1)[1].numpy(force=True)
+        gap = ground_truth - preds
+        gap = numpy.absolute(gap)
+        # print(f"gap: {gap}")
+        accuracy = len(gap[gap<50])/len(gap)
+
+        print( 
+            f"ground_truth: {ground_truth} | \n "
+            f"preds: {preds} | \n"
+            f"gap: {gap} | \n"
+            f"accuracy: {accuracy} | \n"
         )
+
+        pbar.set_description(
+            f"loss: {loss_output.item():.3f} | "
+        )
+
+

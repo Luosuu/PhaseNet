@@ -23,7 +23,6 @@ from transformers import (
 )
 from vector_quantize_pytorch import VectorQuantize
 from seismic_dataset import SeismicDataset
-from rinas.hf.mlm_modules import *
 from accelerate import Accelerator
 from huggingface_hub import login
 from torch_vqvae import SimpleVQAutoEncoder, train
