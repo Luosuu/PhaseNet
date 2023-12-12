@@ -2,7 +2,7 @@
 # From https://github.com/minyoungg/vqtorch/blob/main/examples/autoencoder.py
 
 from tqdm.auto import trange
-
+import numpy
 import torch
 import torch.nn as nn
 from torchvision import datasets, transforms
@@ -28,6 +28,7 @@ from huggingface_hub import login
 from torch_vqvae import SimpleVQAutoEncoder, train
 from postprocess import extract_picks
 from detect_peaks import detect_peaks
+from torch_lm import to_gaussian_batch
 
 def get_label_tensor(ori_label):
     # get label tensor
@@ -63,7 +64,7 @@ class model_pred(torch.nn.Module):
         super().__init__()
         self.mlp_0 = torch.nn.Linear(in_features=2251, out_features=1024)
         self.relu = torch.nn.ReLU()
-        self.mlp_1 = torch.nn.Linear(in_features=1024, out_features=1)
+        self.mlp_1 = torch.nn.Linear(in_features=1024, out_features=9001)
 
     def forward(self, x):
         x = self.mlp_0(x)
@@ -126,7 +127,8 @@ if __name__ == '__main__':
             yield x.to(device), y.to(device)
 
     for _ in (pbar := trange(train_iter)):
-        accum = 0
+        accum_loss = 0
+        accum_accuracy = 0
         for step in range(100):
             optimizer.zero_grad()
             x, y = next(iterate_dataset(train_loader))
@@ -136,13 +138,36 @@ if __name__ == '__main__':
             out = out.squeeze()
             outputs = model_pred(out)
 
-            labels = get_label_tensor(y)
-            outputs = torch.randint(low=0, high=1285, size=(20,)).to(device).to(float) # random guess, loss ~ 500
-            loss = (outputs - labels).abs().mean()
-            # loss.backward()
-            # optimizer.step()
-            accum+=loss.item()
+            labels = y[:, :, 0, 2]
+            labels = to_gaussian_batch(labels).to(device)
+
+            loss_fn = torch.nn.MSELoss()
+            loss = loss_fn(outputs, labels)
+            
+            # labels = get_label_tensor(y)
+            # outputs = torch.randint(low=0, high=1285, size=(20,)).to(device).to(float) # random guess, loss ~ 500
+            # loss = (outputs - labels).abs().mean()
+            loss.backward()
+            optimizer.step()
+            accum_loss+=loss.item()
+
+            ground_truth = labels.max(dim=1)[1].numpy(force=True)
+            preds = outputs.max(dim=1)[1].numpy(force=True)
+            gap = ground_truth - preds
+            gap = numpy.absolute(gap)
+            # print(f"gap: {gap}")
+            accuracy = len(gap[gap<50])/len(gap)
+            
+            accum_accuracy += accuracy
+
+            # print( 
+            #     f"ground_truth: {ground_truth} | \n "
+            #     f"preds: {preds} | \n"
+            #     f"gap: {gap} | \n"
+            #     f"accuracy: {accuracy} | \n"
+            # )
 
         pbar.set_description(
-                f"aver_loss: {accum/100:.3f} | "
+                f"aver_loss: {accum_loss/100:.3f} | "
+                f"aver_accuracy: {accum_accuracy/100:.3f} | "
             )

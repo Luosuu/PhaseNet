@@ -87,15 +87,15 @@ class SimpleVQAutoEncoder(nn.Module):
                 nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1), # changed input channel to 3
                 nn.MaxPool2d(kernel_size=2, stride=2, padding=1), # added padding
                 nn.GELU(),
-                nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
+                nn.Conv2d(16, 12, kernel_size=3, stride=1, padding=1),
                 nn.MaxPool2d(kernel_size=2, stride=2, padding=1), # added padding
-                VectorQuantize(dim=1, accept_image_fmap = True, **vq_kwargs),
+                VectorQuantize(dim=12, accept_image_fmap = True, **vq_kwargs),
             ]
         )
         self.decoder = nn.ModuleList(
             [
                 nn.Upsample(scale_factor=2, mode="nearest"),
-                nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
+                nn.Conv2d(12, 16, kernel_size=3, stride=1, padding=1),
                 nn.GELU(),
                 nn.Upsample(scale_factor=2, mode="nearest"),
                 nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
@@ -185,8 +185,12 @@ if __name__ == '__main__':
     
 
     print("training VQ-VAE")
-    torch.random.manual_seed(seed)
-    model = torch.load("./model/torch_vqvae.pt")
+    # torch.random.manual_seed(seed)
+
+    model = SimpleVQAutoEncoder(codebook_size=num_codes).to(device)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    train(model, train_loader, train_iterations=train_iter)
+    torch.save(model, "./model/torch_vqvae_dim12.pt")
 
     print("Train a BERT")
 
@@ -210,50 +214,25 @@ if __name__ == '__main__':
     for _ in (pbar := trange(train_iter)):
         optimizer.zero_grad()
         x, y = next(iterate_dataset(train_loader))
-        x = x.permute(0, 3, 1, 2)
 
-        out, indices, cmt_loss = model.encode(x)
-        out = out.squeeze()
-        out = torch.nn.functional.pad(out, pad=(0,5), mode="constant", value=0)
+        out = torch.nn.functional.pad(x.squeeze(), pad=(0,5), mode="constant", value=0)
         outputs = model_pred(out)
 
-        # labels = get_label_tensor(y)
         labels = y[:, :, 0, 2]
         labels = to_gaussian_batch(labels).to(device)
-        # print(labels[0].numpy(force=True).max())
-        # outputs = torch.randint(low=0, high=1285, size=(20,)).to(device).to(float) # random guess, loss ~ 500
-
-
-        # ground_truth = labels.max(dim=1)[1].to(float)
-        # preds = outputs.max(dim=1)[1].to(float)
         loss = torch.nn.MSELoss()
         loss_output = loss(outputs, labels)
-        # ground_truth = torch.nn.functional.softmax(labels, dim=1)
-        # outputs = torch.nn.functional.softmax(outputs, dim=1)
-        # loss_output = (ground_truth - outputs).abs().mean()
-        # loss_output = loss(outputs, ground_truth)
         loss_output.backward()
 
-        # loss = (outputs - labels).abs().mean()
-        # loss.backward()
 
         optimizer.step()
         
         ground_truth = labels.max(dim=1)[1].numpy(force=True)
-        # print(outputs.shape)
         outputs = outputs.squeeze(1)
         preds = outputs.max(dim=1)[1].numpy(force=True)
         gap = ground_truth - preds
         gap = numpy.absolute(gap)
-        # print(f"gap: {gap}")
         accuracy = len(gap[gap<50])/len(gap)
-
-        # print( 
-        #     f"ground_truth: {ground_truth} | \n "
-        #     f"preds: {preds} | \n"
-        #     f"gap: {gap} | \n"
-        #     f"accuracy: {accuracy} | \n"
-        # )
 
         pbar.set_description(
             f"loss: {loss_output.item():.3f} | "

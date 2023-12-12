@@ -48,6 +48,7 @@ class SeismicDataset(Dataset):
         self.dt = config.dt
         self.dtype = config.dtype
         self.label_shape = config.label_shape
+        # self.label_shape = "guassian"
         self.label_width = config.label_width
         self.config = config
         # if response_xml is not None:
