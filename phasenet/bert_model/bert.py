@@ -32,7 +32,7 @@ class BERT(nn.Module):
         # multi-layers transformer blocks, deep network
         self.transformer_blocks = nn.ModuleList(
             [TransformerBlock(hidden, attn_heads, hidden * 4, dropout) for _ in range(n_layers)])
-        self.linear_mapping = nn.Linear(2256, 9001)
+        self.linear_mapping = nn.Linear(hidden * 2, 3000)
         # self.relu = nn.ReLU()
 
     def forward(self, x):
@@ -49,7 +49,9 @@ class BERT(nn.Module):
             x = transformer.forward(x, mask)
         
         # x = torch.mean(x, dim = 1)
+        x = x.view((x.shape[0], x.shape[1] * x.shape[2]))
         x = self.linear_mapping(x)
+
         # print(x.shape)
         # x = self.relu(x)
         return x

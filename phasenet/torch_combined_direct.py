@@ -79,7 +79,7 @@ def get_label_tensor(ori_label):
     label = torch.tensor(picks).to(device)
     return label
 
-class SimpleVQAutoEncoder(nn.Module):
+class CombinedModel(nn.Module):
     def __init__(self, **vq_kwargs):
         super().__init__()
         self.encoder = nn.ModuleList(
@@ -87,29 +87,23 @@ class SimpleVQAutoEncoder(nn.Module):
                 nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1), # changed input channel to 3
                 nn.MaxPool2d(kernel_size=2, stride=2, padding=1), # added padding
                 nn.GELU(),
-                nn.Conv2d(16, 12, kernel_size=3, stride=1, padding=1),
+                nn.Conv2d(16, 2, kernel_size=3, stride=1, padding=1),
                 nn.MaxPool2d(kernel_size=2, stride=2, padding=1), # added padding
-                VectorQuantize(dim=12, accept_image_fmap = True, **vq_kwargs),
+                VectorQuantize(dim=2, accept_image_fmap = True, **vq_kwargs),
             ]
         )
-        self.decoder = nn.ModuleList(
-            [
-                nn.Upsample(scale_factor=2, mode="nearest"),
-                nn.Conv2d(12, 16, kernel_size=3, stride=1, padding=1),
-                nn.GELU(),
-                nn.Upsample(scale_factor=2, mode="nearest"),
-                nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
-            ]
-        )
+
+        self.model_pred = BERT(hidden = 756)
         
         return
 
     def forward(self, x):
         x, indices, commit_loss = self.encode(x)
-        
-        x = self.decode(x)
+        x = x.permute(0, 3, 1, 2)
+        x = torch.nn.functional.pad(x.squeeze(), pad=(0,5), mode="constant", value=0)
+        x = self.model_pred(x)
 
-        return x, indices, commit_loss
+        return x
 
     def encode(self, x):
         # print(x)
@@ -120,46 +114,35 @@ class SimpleVQAutoEncoder(nn.Module):
                 x = layer(x)
         
         return x, indices, commit_loss
-    
-    def decode(self, x):
-        for layer in self.decoder:
-            x = layer(x)
-        # print(x)
-        return x.clamp(-1, 1)
 
 
-def train(model, train_loader, train_iterations=1000, alpha=10):
-    def iterate_dataset(data_loader):
-        data_iter = iter(data_loader)
-        while True:
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                data_iter = iter(data_loader)
-                x, y = next(data_iter)
-            yield x.to(device), y.to(device)
+def crop_aligned_tensors(tensor1, tensor2, new_size=3000):
+  """
+  Crops two tensors with randomly chosen aligned window centers.
 
-    for _ in (pbar := trange(train_iterations)):
-        opt.zero_grad()
-        x, y = next(iterate_dataset(train_loader))
-        # print(x.shape) torch.Size([154, 3, 9001, 1])
-        # print(y.shape)
-        x = x.permute(0, 3, 1, 2)
-        y = y.permute(0, 3, 1, 2)
-        out, indices, cmt_loss = model(x)
-        # print(out.shape)
-        out = out[:, :, :x.size(2)] # added to match out and x
-        rec_loss = (out - x).abs().mean()
-        # rec_loss = (out - y).abs().mean()
-        (rec_loss + alpha * cmt_loss).backward()
+  Args:
+    tensor1: First tensor of shape [8, 1, 9001, 2].
+    tensor2: Second tensor of shape [8, 1, 9001, 2].
+    new_size: Desired size of the cropped tensors (default: 3000).
 
-        opt.step()
-        pbar.set_description(
-            f"rec loss: {rec_loss.item():.3f} | "
-            + f"cmt loss: {cmt_loss.item():.3f} | "
-            + f"active %: {indices.unique().numel() / num_codes * 100:.3f}"
-        )
-    return
+  Returns:
+    cropped_tensor1, cropped_tensor2: Cropped versions of the original tensors.
+  """
+  # Calculate the maximum window center offset for aligned cropping.
+  max_offset = (tensor1.shape[2] - new_size)
+
+  # Randomly choose the window center offset within the valid range.
+  offset = torch.randint(0, max_offset + 1, (1,))
+
+  # Calculate the start and end indices for cropping.
+  start_index = offset[0]
+  end_index = start_index + new_size
+
+  # Crop both tensors using the same window.
+  cropped_tensor1 = tensor1[:,:, start_index:end_index, :]
+  cropped_tensor2 = tensor2[:, start_index:end_index,:, :]
+
+  return cropped_tensor1, cropped_tensor2
 
 if __name__ == '__main__':
 
@@ -168,8 +151,9 @@ if __name__ == '__main__':
     train_iter = 1000
     num_codes = 256
     seed = 1234
-    batch_size = 20
+    batch_size = 8
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    epoch_num = 10
     
     data_dir = './dataset/waveform_train/'  
     data_list = './dataset/waveform.csv'
@@ -183,61 +167,44 @@ if __name__ == '__main__':
         shuffle=True,
     )
 
-    
-
-    print("training VQ-VAE")
-    # torch.random.manual_seed(seed)
-
-    model = SimpleVQAutoEncoder(codebook_size=num_codes).to(device)
+    model = CombinedModel(codebook_size=num_codes).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=lr)
-    train(model, train_loader, train_iterations=train_iter)
-    torch.save(model, "./model/torch_vqvae_dim12.pt")
-
-    print("Train a BERT")
-
-    model_pred = BERT(hidden = 2256)
     
-    
-    optimizer = torch.optim.AdamW(model_pred.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    # loss = torch.nn.MSELoss()
+    loss = torch.nn.CrossEntropyLoss()
 
-    model_pred = model_pred.to(device)
-
-    def iterate_dataset(data_loader):
-        data_iter = iter(data_loader)
-        while True:
-            try:
-                x, y = next(data_iter)
-            except StopIteration:
-                data_iter = iter(data_loader)
-                x, y = next(data_iter)
-            yield x.to(device), y.to(device)
-
-    for _ in (pbar := trange(train_iter)):
-        optimizer.zero_grad()
-        x, y = next(iterate_dataset(train_loader))
-
-        out = torch.nn.functional.pad(x.squeeze(), pad=(0,5), mode="constant", value=0)
-        outputs = model_pred(out)
-
-        labels = y[:, :, 0, 2]
-        labels = to_gaussian_batch(labels).to(device)
-        loss = torch.nn.MSELoss()
-        loss_output = loss(outputs, labels)
-        loss_output.backward()
+    for _ in range(epoch_num):
+        loss_accum = 0
+        acc_accum = 0
+        for i, (x, y) in enumerate(train_loader):
+            print(f"step: {i}")
+            optimizer.zero_grad()
+            # out = torch.nn.functional.pad(x.squeeze(), pad=(0,5), mode="constant", value=0)
+            x = x.permute(0, 3, 1, 2).to(device)
+            x, y = crop_aligned_tensors(x, y)
+            outputs = model(x)
+            print(y.shape)
+            labels = y[:, :, 0, 2]
+            labels = to_gaussian_batch(labels).to(device)
+            loss_output = loss(outputs, labels)
+            loss_output.backward()
 
 
-        optimizer.step()
-        
-        ground_truth = labels.max(dim=1)[1].numpy(force=True)
-        outputs = outputs.squeeze(1)
-        preds = outputs.max(dim=1)[1].numpy(force=True)
-        gap = ground_truth - preds
-        gap = numpy.absolute(gap)
-        accuracy = len(gap[gap<50])/len(gap)
+            optimizer.step()
+            
+            ground_truth = labels.max(dim=1)[1].numpy(force=True)
+            outputs = outputs.squeeze(1)
+            preds = outputs.max(dim=1)[1].numpy(force=True)
+            gap = ground_truth - preds
+            gap = numpy.absolute(gap)
+            accuracy = len(gap[gap<50])/len(gap)
 
-        pbar.set_description(
-            f"loss: {loss_output.item():.3f} | "
-            f"accuracy: {accuracy:.3f} | "
-        )
+            loss_accum += loss_output.item()
+            acc_accum +=  accuracy
+
+
+        print(f"loss: {loss_accum/20:.3f}")
+        print(f"accuracy: {acc_accum/20:.3f}")
 
 
